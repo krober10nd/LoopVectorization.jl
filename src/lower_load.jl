@@ -313,6 +313,22 @@ function lower_load!(
                     end
                     return
                 end
+            elseif u₁loopsym !== vectorized
+                mno, id = maxnegativeoffset(ls, op, u₁loopsym)
+                if -u₁ < mno < 0
+                    tdtemp = UnrollArgs(td, (-mno) % Int64)
+                    if isvectorized(op)
+                        lower_load_vectorized!(q, ls, op, tdtemp, mask, 0)
+                    else
+                        lower_load_scalar!(q, op, td, 0, indices_calculated_by_pointer_offsets(ls, op.ref))
+                    end
+                    varnew = variable_name(op, suffix)
+                    varold = variable_name(operations(ls)[id], suffix)
+                    for u ∈ -mno:u₁-1
+                        push!(q.args, Expr(:(=), Symbol(varnew, u), Symbol(varold, u + mno)))
+                    end
+                    return
+                end
             end
         end
     end

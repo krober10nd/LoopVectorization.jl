@@ -16,13 +16,12 @@ end
     vnoaliasstore!(ptr, SIMDPirates.vprod(v), i, m)
 end
 
-function storeinstr(op::Operation)
+function storeinstr(ls::LoopSet, op::Operation)
     opp = first(parents(op))
     if instruction(opp).instr === :identity
         opp = first(parents(opp))
     end
-    defaultstoreop = :vnoaliasstore!
-    # defaultstoreop = :vstore!
+    defaultstoreop = ls.aggressivealiasing[] ? :vnoaliasstore! : :vstore!
     instr = if iszero(length(reduceddependencies(opp)))
         defaultstoreop
     else
@@ -94,7 +93,7 @@ end
 
 
 function lower_conditionalstore_scalar!(
-    q::Expr, op::Operation, ua::UnrollArgs, mask::Union{Nothing,Symbol,Unsigned}, inds_calc_by_ptr_offset::Vector{Bool}
+    q::Expr, op::Operation, ua::UnrollArgs, mask::Union{Nothing,Symbol,Unsigned}, inds_calc_by_ptr_offset::Vector{Bool}, storeinst
 )
     @unpack u₁, u₁loopsym, u₂loopsym, vectorized, suffix = ua
     mvar, opu₁, opu₂ = variable_name_and_unrolled(first(parents(op)), u₁loopsym, u₂loopsym, suffix)
@@ -108,12 +107,12 @@ function lower_conditionalstore_scalar!(
         varname = varassignname(mvar, u, opu₁)
         condvarname = varassignname(condvar, u, condu₁)
         td = UnrollArgs(ua, u)
-        push!(q.args, Expr(:&&, condvarname, Expr(:call, storeinstr(op), ptr, varname, mem_offset_u(op, td, inds_calc_by_ptr_offset))))
+        push!(q.args, Expr(:&&, condvarname, Expr(:call, storeinst, ptr, varname, mem_offset_u(op, td, inds_calc_by_ptr_offset))))
     end
     nothing
 end
 function lower_conditionalstore_vectorized!(
-    q::Expr, op::Operation, ua::UnrollArgs, mask::Union{Nothing,Symbol,Unsigned}, isunrolled::Bool, inds_calc_by_ptr_offset::Vector{Bool}
+    q::Expr, op::Operation, ua::UnrollArgs, mask::Union{Nothing,Symbol,Unsigned}, isunrolled::Bool, inds_calc_by_ptr_offset::Vector{Bool}, storeinst
 )
     @unpack u₁, u₁loopsym, u₂loopsym, vectorized, suffix = ua
     loopdeps = loopdependencies(op)
@@ -136,7 +135,7 @@ function lower_conditionalstore_vectorized!(
         td = UnrollArgs(ua, u)
         name, mo = name_memoffset(mvar, op, td, opu₁, inds_calc_by_ptr_offset)
         condvarname = varassignname(condvar, u, condu₁)
-        instrcall = Expr(:call, storeinstr(op), ptr, name, mo)
+        instrcall = Expr(:call, storeinst, ptr, name, mo)
         if mask !== nothing && (vecnotunrolled || u == U - 1)
             push!(instrcall.args, Expr(:call, :&, condvarname, mask))
         else
@@ -147,7 +146,7 @@ function lower_conditionalstore_vectorized!(
 end
 
 function lower_store_scalar!(
-    q::Expr, op::Operation, ua::UnrollArgs, mask::Union{Nothing,Symbol,Unsigned}, inds_calc_by_ptr_offset::Vector{Bool}
+    q::Expr, op::Operation, ua::UnrollArgs, mask::Union{Nothing,Symbol,Unsigned}, inds_calc_by_ptr_offset::Vector{Bool}, storeinst
 )
     @unpack u₁, u₁loopsym, u₂loopsym, vectorized, suffix = ua
     mvar, opu₁, opu₂ = variable_name_and_unrolled(first(parents(op)), u₁loopsym, u₂loopsym, suffix)
@@ -157,12 +156,12 @@ function lower_store_scalar!(
     for u ∈ 0:u₁-1
         varname = varassignname(mvar, u, opu₁)
         td = UnrollArgs(ua, u)
-        push!(q.args, Expr(:call, storeinstr(op), ptr, varname, mem_offset_u(op, td, inds_calc_by_ptr_offset)))
+        push!(q.args, Expr(:call, storeinst, ptr, varname, mem_offset_u(op, td, inds_calc_by_ptr_offset)))
     end
     nothing
 end
 function lower_store_vectorized!(
-    q::Expr, op::Operation, ua::UnrollArgs, mask::Union{Nothing,Symbol,Unsigned}, isunrolled::Bool, inds_calc_by_ptr_offset::Vector{Bool}
+    q::Expr, op::Operation, ua::UnrollArgs, mask::Union{Nothing,Symbol,Unsigned}, isunrolled::Bool, inds_calc_by_ptr_offset::Vector{Bool}, storeinst
 )
     @unpack u₁, u₁loopsym, u₂loopsym, vectorized, suffix = ua
     loopdeps = loopdependencies(op)
@@ -182,7 +181,7 @@ function lower_store_vectorized!(
     for u ∈ umin:U-1
         td = UnrollArgs(ua, u)
         name, mo = name_memoffset(mvar, op, td, opu₁, inds_calc_by_ptr_offset)
-        instrcall = Expr(:call, storeinstr(op), ptr, name, mo)
+        instrcall = Expr(:call, storeinst, ptr, name, mo)
         if mask !== nothing && (vecnotunrolled || u == U - 1)
             push!(instrcall.args, mask)
         end
@@ -196,17 +195,18 @@ function lower_store!(
     isunrolled = u₁loopsym ∈ loopdependencies(op)
     inds_calc_by_ptr_offset = indices_calculated_by_pointer_offsets(ls, op.ref)
     ua = UnrollArgs(ua, isunrolled ? u₁ : 1)
+    storeinst = storeinstr(ls, op)
     if instruction(op).instr !== :conditionalstore!
         if vectorized ∈ loopdependencies(op)
-            lower_store_vectorized!(q, op, ua, mask, isunrolled, inds_calc_by_ptr_offset)
+            lower_store_vectorized!(q, op, ua, mask, isunrolled, inds_calc_by_ptr_offset, storeinst)
         else
-            lower_store_scalar!(q, op, ua, mask, inds_calc_by_ptr_offset)
+            lower_store_scalar!(q, op, ua, mask, inds_calc_by_ptr_offset, storeinst)
         end
     else
         if vectorized ∈ loopdependencies(op)
-            lower_conditionalstore_vectorized!(q, op, ua, mask, isunrolled, inds_calc_by_ptr_offset)
+            lower_conditionalstore_vectorized!(q, op, ua, mask, isunrolled, inds_calc_by_ptr_offset, storeinst)
         else
-            lower_conditionalstore_scalar!(q, op, ua, mask, inds_calc_by_ptr_offset)
+            lower_conditionalstore_scalar!(q, op, ua, mask, inds_calc_by_ptr_offset, storeinst)
         end
     end
 end

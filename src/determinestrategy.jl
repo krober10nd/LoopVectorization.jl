@@ -263,6 +263,7 @@ function solve_unroll_iter(X, R, u₁L, u₂L, u₁range, u₂range)
     bestcost = Inf
     for u₁temp ∈ u₁range
         for u₂temp ∈ u₂range
+            # @show RR, u₁temp*u₂temp*R₁ + u₁temp*R₂ + u₂temp*R₅ u₁temp, u₂temp
             RR ≥ u₁temp*u₂temp*R₁ + u₁temp*R₂ + u₂temp*R₅ || continue
             tempcost = unroll_cost(X, u₁temp, u₂temp, u₁L, u₂L)
             if tempcost < bestcost
@@ -286,9 +287,10 @@ function solve_unroll(X, R, u₁L, u₂L, u₁step, u₂step)
     discriminant < 0 && return -1,-1,Inf
     u₁float = max(float(u₁step), (sqrt(discriminant) + b) / (-2a)) # must be at least 1
     u₂float = (RR - u₁float*R₂)/(u₁float*R₁)
-    if !(isfinite(u₂float) && isfinite(u₁float))
-        return 4, 4, unroll_cost(X, 4, 4, u₁L, u₂L)
-        # return itertilesize(X, u₁L, u₂L)
+    if !(isfinite(u₂float) && isfinite(u₁float)) # brute force
+        u₁low = u₂low = 1
+        u₁high = u₂high = REGISTER_COUNT == 32 ? 10 : 6#8
+        return solve_unroll_iter(X, R, u₁L, u₂L, u₁low:u₁step:u₁high, u₂low:u₂step:u₂high)
     end
     u₁low = floor(Int, u₁float)
     u₂low = max(u₂step, floor(Int, u₂float)) # must be at least 1
@@ -478,9 +480,11 @@ function maxnegativeoffset(ls::LoopSet, op::Operation, u::Symbol)
     id = 0
     for opp ∈ operations(ls)
         opp === op && continue
+        isload(opp) || continue
         oppmref = opp.ref
         oppref = oppmref.ref
         sameref(opref, oppref) || continue
+        any(oppp -> isstore(oppp) && oppp.ref == oppref, operations(ls)) && (ls.aggressivealiasing[] = false; continue)
         opinds = getindicesonly(op)
         oppinds = getindicesonly(opp)
         opoffs = opref.offsets
@@ -526,6 +530,14 @@ function maxnegativeoffset(ls::LoopSet, op::Operation, unrollsyms::UnrollSymbols
         end
     end
     mno, i
+end
+
+function loadintostore(ls::LoopSet, op::Operation)
+    isload(op) || return false
+    for opp ∈ operations(ls)
+        isstore(opp) && opp.ref == op.ref && return true
+    end
+    false
 end
 function load_elimination_cost_factor!(
     cost_vec, reg_pressure, choose_to_inline, ls::LoopSet, op::Operation, iters, unrollsyms::UnrollSymbols, Wshift, size_T
@@ -700,7 +712,7 @@ function evaluate_cost_tile(
             prefetch_good_idea = true
         end
         # @show isunrolled₁, isunrolled₂, op rt, lat, rp
-        rp = opisininnerloop ? rp : zero(rp) # we only care about register pressure within the inner most loop
+        rp = (!opisininnerloop || loadintostore(ls, op)) ? zero(rp) : rp # we only care about register pressure within the inner most loop
         rt *= iters[id]
         if u₁reduces & u₂reduces
             cost_vec[4] += rt

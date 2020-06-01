@@ -31,7 +31,7 @@ function lower!(
     q::Expr, op::Operation, ls::LoopSet, unrollargs::UnrollArgs, mask::Union{Nothing,Symbol,Unsigned}, filterstore::Bool
 )
     if filterstore
-        if isstore(op)
+        if ls.aggressivealiasing[] && isstore(op)
             lower_store!(q, ls, op, unrollargs, mask)
         end
     else
@@ -46,6 +46,8 @@ function lower!(
             lower_load!(q, op, ls, unrollargs, mask)
         elseif iscompute(op)
             lower_compute!(q, op, unrollargs, mask)
+        elseif !ls.aggressivealiasing[] && isstore(op)
+            lower_store!(q, ls, op, unrollargs, mask)
         end
     end
 end
@@ -54,6 +56,7 @@ function lower!(
     suffix::Union{Nothing,Int}, mask::Union{Nothing,Symbol,Unsigned}, filterstore = nothing
 )
     foreach(op -> lower!(q, op, ls, UnrollArgs(u₁, unrollsyms, u₂, suffix), mask, filterstore), ops)
+    #foreach(op -> lower!(q, op, ls, UnrollArgs(u₁, unrollsyms, u₂, suffix), mask, nothing), ops)
 end
 
 function lower_block(ls::LoopSet, us::UnrollSpecification, n::Int, inclmask::Bool, UF)

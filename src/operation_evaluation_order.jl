@@ -68,6 +68,20 @@ function addoptoorder!(
     for opp ∈ parents(op) # ensure parents are added first
         addoptoorder!(ls, included_vars, place_after_loop, opp, loopsym, _n, u₁loop, u₂loop, vectorized, loopistiled)
     end
+    if isload(op)
+        if u₁loop !== vectorized
+            mno, ido = maxnegativeoffset(ls, op, u₁loop)
+            if -10 < mno < 0
+                addoptoorder!(ls, included_vars, place_after_loop, operations(ls)[ido], loopsym, _n, u₁loop, u₂loop, vectorized, loopistiled)
+            end
+        end    
+        if u₂loop !== vectorized
+            mno, ido = maxnegativeoffset(ls, op, u₂loop)
+            if -10 < mno < 0
+                addoptoorder!(ls, included_vars, place_after_loop, operations(ls)[ido], loopsym, _n, u₁loop, u₂loop, vectorized, loopistiled)
+            end
+        end
+    end
     included_vars[id] && return nothing
     included_vars[id] = true
     isunrolled = (isu₁unrolled(op)) + 1
