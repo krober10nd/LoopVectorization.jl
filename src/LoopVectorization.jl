@@ -33,6 +33,22 @@ export LowDimArray, stridedpointer,
 
 const VECTORWIDTHSYMBOL, ELTYPESYMBOL = Symbol("##Wvecwidth##"), Symbol("##Tloopeltype##")
 
+# redefine without @pure
+@inline VectorizationBase.vadd(a::Int64, b::Int64) = llvmcall("%res = add nsw i64 %0, %1\nret i64 %res", Int64, Tuple{Int64,Int64}, a, b)
+@inline VectorizationBase.vsub(a::Int64, b::Int64) = llvmcall("%res = sub nsw i64 %0, %1\nret i64 %res", Int64, Tuple{Int64,Int64}, a, b)
+@inline VectorizationBase.vmul(a::Int64, b::Int64) = llvmcall("%res = mul nsw i64 %0, %1\nret i64 %res", Int64, Tuple{Int64,Int64}, a, b)
+@inline VectorizationBase.vadd(a::Int32, b::Int32) = llvmcall("%res = add nsw i32 %0, %1\nret i32 %res", Int32, Tuple{Int32,Int32}, a, b)
+@inline VectorizationBase.vsub(a::Int32, b::Int32) = llvmcall("%res = sub nsw i32 %0, %1\nret i32 %res", Int32, Tuple{Int32,Int32}, a, b)
+@inline VectorizationBase.vmul(a::Int32, b::Int32) = llvmcall("%res = mul nsw i32 %0, %1\nret i32 %res", Int32, Tuple{Int32,Int32}, a, b)
+
+@inline VectorizationBase.vleft_bitshift(a::Int64, b::Int64) = llvmcall("%res = shl nsw i64 %0, %1\nret i64 %res", Int64, Tuple{Int64,Int64}, a, b)
+@inline VectorizationBase.vleft_bitshift(a::Int32, b::Int32) = llvmcall("%res = shl nsw i32 %0, %1\nret i32 %res", Int32, Tuple{Int32,Int32}, a, b)
+for T ∈ [Bool,Int8,Int16,Int32,Int64,UInt8,UInt16,UInt32,UInt64,Float32,Float64]
+    for I ∈ [Int32,UInt32,Int64,UInt64]
+        @eval @inline VectorizationBase.gep(ptr::Ptr{$T}, i::$I) = $(VectorizationBase.gepquote(T, I, false))
+    end
+end
+
 """
 REGISTER_COUNT defined in VectorizationBase is supposed to correspond to the actual number of floating point registers on the system.
 It is hardcoded into a file at build time.
